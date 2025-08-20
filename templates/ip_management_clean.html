@@ -980,40 +980,43 @@
         // Load subnet overview
         async function loadSubnetOverview() {
             try {
-                const response = await fetch('/api/subnets-overview');
+                const response = await fetch('/api/subnet-monitor?cidr=24&limit=8');
                 const data = await response.json();
                 
                 const container = document.getElementById('subnet-overview-grid');
                 
-                if (!data.subnets || data.subnets.length === 0) {
+                if (!data || data.length === 0) {
                     container.innerHTML = '<div class="col-span-full text-center py-8 text-gray-500">No subnet data available</div>';
                     return;
                 }
                 
                 // Show first 8 subnets in overview
-                const overviewSubnets = data.subnets.slice(0, 8);
+                const overviewSubnets = data.slice(0, 8);
                 
                 container.innerHTML = overviewSubnets.map(subnet => `
-                    <div class="bg-gray-50 rounded-lg p-4 border">
+                    <div class="bg-gray-50 rounded-lg p-4 border cursor-pointer hover:bg-gray-100" 
+                         onclick="openSubnetDetail('${subnet.subnet}')">
                         <div class="flex justify-between items-center mb-2">
                             <h4 class="font-mono text-sm font-semibold text-gray-900">${subnet.subnet}</h4>
-                            <span class="text-xs px-2 py-1 bg-${subnet.ip_type === 'private' ? 'blue' : 'green'}-100 text-${subnet.ip_type === 'private' ? 'blue' : 'green'}-800 rounded">
-                                ${subnet.ip_type}
+                            <span class="text-xs px-2 py-1 bg-blue-100 text-blue-800 rounded">
+                                /${subnet.prefix_length}
                             </span>
                         </div>
                         <div class="text-xs text-gray-600 mb-2">
                             Used: ${subnet.used_ips}/${subnet.total_ips}
                         </div>
                         <div class="w-full bg-gray-200 rounded-full h-1.5">
-                            <div class="bg-blue-600 h-1.5 rounded-full" style="width: ${subnet.utilization}%"></div>
+                            <div class="bg-blue-600 h-1.5 rounded-full" style="width: ${subnet.utilization_percent}%"></div>
                         </div>
                         <div class="text-xs text-gray-500 mt-1">
-                            Available: ${subnet.available_ips} (${subnet.utilization}%)
+                            Available: ${subnet.available_ips} (${subnet.utilization_percent}%)
                         </div>
                     </div>
                 `).join('');
             } catch (error) {
                 console.error('Error loading subnet overview:', error);
+                document.getElementById('subnet-overview-grid').innerHTML = 
+                    '<div class="col-span-full text-center py-8 text-red-500">Failed to load subnet data</div>';
             }
         }
 
@@ -1133,82 +1136,82 @@
         // VRF Monitoring functions
         async function loadVRFMonitoring() {
             try {
-                const response = await fetch('/api/vrf-monitoring');
+                const response = await fetch('/api/vrf-summary');
                 const data = await response.json();
                 
-                document.getElementById('vrf-last-update').textContent = `Last updated: ${data.timestamp}`;
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to load VRF data');
+                }
+                
+                // Update timestamp
+                const now = new Date();
+                document.getElementById('vrf-last-update').textContent = `Last updated: ${now.toLocaleTimeString()}`;
                 
                 const container = document.getElementById('vrf-grid');
                 
-                if (!data.vrf_data || data.vrf_data.length === 0) {
+                if (!data.summary || data.summary.length === 0) {
                     container.innerHTML = '<div class="col-span-full text-center py-8 text-gray-500">No VRF data available</div>';
                     return;
                 }
                 
-                container.innerHTML = data.vrf_data.map(vrf => `
+                container.innerHTML = data.summary.map(vrf => {
+                    const statusColor = vrf.status === 'Critical' ? 'red' : 
+                                      vrf.status === 'Warning' ? 'yellow' : 'green';
+                    
+                    return `
                     <div class="bg-white rounded-lg shadow p-6 hover:shadow-lg transition">
                         <div class="flex justify-between items-start mb-4">
-                            <h4 class="text-lg font-semibold text-gray-900">${vrf.vrf_name}</h4>
-                            <span class="text-sm px-3 py-1 bg-purple-100 text-purple-800 rounded-full">
-                                ${vrf.utilization_percentage}% Used
+                            <h4 class="text-lg font-semibold text-gray-900">${vrf.service_domain || 'Unassigned'}</h4>
+                            <span class="text-sm px-3 py-1 bg-${statusColor}-100 text-${statusColor}-800 rounded-full">
+                                ${vrf.utilization_percent}% Used
                             </span>
                         </div>
                         
                         <div class="space-y-3">
-                            <div class="grid grid-cols-2 gap-4 text-sm">
-                                <div>
-                                    <span class="text-gray-600">Total IPs:</span>
-                                    <span class="font-semibold ml-2">${vrf.total_ips.toLocaleString()}</span>
-                                </div>
-                                <div>
-                                    <span class="text-gray-600">Subnets:</span>
-                                    <span class="font-semibold ml-2">${vrf.subnet_count}</span>
-                                </div>
-                                <div>
-                                    <span class="text-gray-600">Used:</span>
-                                    <span class="font-semibold text-red-600 ml-2">${vrf.used_ips.toLocaleString()}</span>
-                                </div>
-                                <div>
-                                    <span class="text-gray-600">Available:</span>
-                                    <span class="font-semibold text-green-600 ml-2">${vrf.available_ips.toLocaleString()}</span>
-                                </div>
+                            <div class="flex justify-between items-center">
+                                <span class="text-sm text-gray-600">Total IPs</span>
+                                <span class="font-medium">${vrf.total_ips.toLocaleString()}</span>
                             </div>
                             
-                            <div class="w-full bg-gray-200 rounded-full h-2">
-                                <div class="bg-purple-600 h-2 rounded-full" style="width: ${vrf.utilization_percentage}%"></div>
+                            <div class="flex justify-between items-center">
+                                <span class="text-sm text-gray-600">Used</span>
+                                <span class="font-medium text-red-600">${vrf.used_ips.toLocaleString()}</span>
                             </div>
                             
-                            <div class="text-xs text-gray-500">
-                                <div class="flex justify-between">
-                                    <span>Devices: ${vrf.device_count || 0}</span>
-                                    <span>Last Update: ${vrf.last_update}</span>
-                                </div>
+                            <div class="flex justify-between items-center">
+                                <span class="text-sm text-gray-600">Available</span>
+                                <span class="font-medium text-green-600">${vrf.available_ips.toLocaleString()}</span>
                             </div>
                             
-                            ${vrf.subnet_list && vrf.subnet_list.length > 0 ? `
-                                <div class="pt-3 border-t border-gray-200">
-                                    <div class="text-xs text-gray-500 mb-2">Subnets:</div>
-                                    <div class="flex flex-wrap gap-1">
-                                        ${vrf.subnet_list.map(subnet => `
-                                            <span class="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded cursor-pointer hover:bg-blue-200" 
-                                                  onclick="openSubnetDetail('${subnet}')">${subnet}</span>
-                                        `).join('')}
-                                        ${vrf.has_more_subnets ? '<span class="text-xs text-gray-400">...</span>' : ''}
-                                    </div>
-                                </div>
-                            ` : ''}
+                            <div class="flex justify-between items-center">
+                                <span class="text-sm text-gray-600">Reserved</span>
+                                <span class="font-medium text-yellow-600">${vrf.reserved_ips.toLocaleString()}</span>
+                            </div>
+                            
+                            <div class="w-full bg-gray-200 rounded-full h-2 mt-4">
+                                <div class="bg-blue-600 h-2 rounded-full transition-all duration-300" 
+                                     style="width: ${vrf.utilization_percent}%"></div>
+                            </div>
+                            
+                            <div class="text-xs text-gray-500 mt-2">
+                                ${vrf.percentage_of_total}% of total infrastructure
+                            </div>
                         </div>
                     </div>
-                `).join('');
+                    `;
+                }).join('');
+                
             } catch (error) {
                 console.error('Error loading VRF monitoring:', error);
-                showToast('Failed to load VRF monitoring data', 'error');
+                document.getElementById('vrf-grid').innerHTML = 
+                    '<div class="col-span-full text-center py-8 text-red-500">Failed to load VRF monitoring data</div>';
             }
         }
 
         function refreshVRFData() {
             loadVRFMonitoring();
             showToast('VRF data refreshed', 'success');
+        }
         }
 
         // Subnet Detail Modal functions
