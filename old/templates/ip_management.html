@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IPAM - IP Management System</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="/static/css/style.css" rel="stylesheet">
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <header class="gradient-bg shadow-lg">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+             <div class="flex justify-between items-center">
+                <div class="flex items-center">
+                    <i class="fas fa-network-wired text-2xl text-white mr-3"></i>
+                    <h1 class="text-2xl font-bold text-white">IP Management System</h1>
+                </div>
+                <div class="flex items-center space-x-3">
+                    <a href="/" class="bg-white bg-opacity-20 hover:bg-opacity-30 text-white px-4 py-2 rounded-lg">
+                        <i class="fas fa-home mr-2"></i>Dashboard
+                    </a>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <div class="bg-white rounded-lg shadow-md mb-6">
+            <div class="border-b border-gray-200">
+                <nav class="flex">
+                    <button class="tab-button active" onclick="showTab('conflicts-tab', this)">
+                        <i class="fas fa-exclamation-triangle mr-2"></i>IP Conflicts
+                    </button>
+                    <button class="tab-button" onclick="showTab('subnets-tab', this)">
+                        <i class="fas fa-network-wired mr-2"></i>Subnet Analysis
+                    </button>
+                </nav>
+            </div>
+
+            <div id="conflicts-tab" class="tab-content active p-6">
+                <h2 class="text-xl font-semibold mb-4">IP Address Conflicts</h2>
+                <div id="conflicts-list" class="space-y-4">
+                    <div class="text-center py-8"><i class="fas fa-spinner loading-spinner text-2xl"></i><p class="mt-2">Loading...</p></div>
+                </div>
+            </div>
+
+            <div id="subnets-tab" class="tab-content p-6">
+                <h2 class="text-xl font-semibold mb-4">Subnet Analysis</h2>
+                 <div id="subnets-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    <div class="text-center py-8"><i class="fas fa-spinner loading-spinner text-2xl"></i><p class="mt-2">Loading...</p></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div id="toast-container" class="fixed bottom-5 right-5 z-50 space-y-3"></div>
+
+    <script src="/static/js/app.js"></script>
+    <script>
+        let ipamData = { conflicts: null, portIPs: null };
+
+        document.addEventListener('DOMContentLoaded', loadIpamData);
+
+        async function loadIpamData() {
+            try {
+                const [conflicts, portIPs] = await Promise.all([
+                    fetch('/api/ipam/ip-conflicts').then(res => res.json()),
+                    fetch('/api/ipam/port-ips').then(res => res.json())
+                ]);
+                ipamData = { conflicts, portIPs };
+                updateConflictsTab();
+                updateSubnetsTab();
+            } catch (error) {
+                console.error('❌ Error loading IPAM data:', error);
+                showToast('Failed to load IPAM data.', 'error');
+            }
+        }
+
+        function updateConflictsTab() {
+            const { conflicts } = ipamData.conflicts;
+            const container = document.getElementById('conflicts-list');
+            
+            if (!conflicts || conflicts.length === 0) {
+                container.innerHTML = `<div class="text-center py-12 text-green-600"><i class="fas fa-check-circle text-3xl mb-2"></i><p>No IP conflicts detected!</p></div>`;
+                return;
+            }
+
+            container.innerHTML = conflicts.map(c => `
+                <div class="border-l-4 border-red-500 bg-red-50 p-4 rounded-r-lg">
+                    <h3 class="font-bold text-red-800 font-mono">${c.ip} (${c.conflict_count} uses)</h3>
+                    <div class="mt-2 space-y-2 text-sm">
+                        ${c.usage.map(u => `
+                            <div class="p-2 bg-white rounded border">
+                                <strong>Host:</strong> ${u.host_name} <br>
+                                <strong>Interface:</strong> ${u.interface}
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function updateSubnetsTab() {
+            const { subnets } = ipamData.portIPs;
+            const container = document.getElementById('subnets-grid');
+
+            if (!subnets || subnets.length === 0) {
+                container.innerHTML = `<div class="text-center py-12 text-gray-500"><i class="fas fa-info-circle text-3xl mb-2"></i><p>No subnet data to analyze.</p></div>`;
+                return;
+            }
+
+            container.innerHTML = subnets.map(s => `
+                <div class="bg-white rounded-lg shadow p-4 border-l-4 border-blue-500">
+                    <h3 class="font-bold text-blue-800 font-mono">${s.subnet}</h3>
+                    <p class="text-gray-600 mt-2">${s.ip_count} IPs assigned</p>
+                </div>
+            `).join('');
+        }
+        
+        function showTab(tabId, button) {
+            document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+            document.getElementById(tabId).classList.add('active');
+            button.classList.add('active');
+        }
+    </script>
+</body>
+</html>

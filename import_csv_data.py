@@ -1,14 +1,14 @@
 """
-Import Network Data from CSV to IPAM Database
-Imports data from datalake.Inventory.port.csv into IPAM system
+Import CSV data to IPAM database
+Parse network inventory CSV and populate ip_inventory table
 """
 
 import mysql.connector
 from mysql.connector import Error
 import csv
 import ipaddress
-from datetime import datetime
 import re
+from datetime import datetime
 
 # Database Configuration
 DB_CONFIG = {
@@ -18,256 +18,267 @@ DB_CONFIG = {
     'database': 'ipam_db'
 }
 
-def extract_vrf_vpn(ifAlias, ifDescr):
-    """Extract VRF/VPN information from interface alias and description"""
-    text = f"{ifAlias or ''} {ifDescr or ''}".lower()
-    
-    # Look for VRF patterns
-    vrf_patterns = [
-        r'vrf[_\s]*([a-zA-Z0-9_\-]+)',
-        r'vpn[_\s]*([a-zA-Z0-9_\-]+)',
-        r'service[_\s]*([a-zA-Z0-9_\-]+)',
-        r'tot[_\s]*([a-zA-Z0-9_\-]+)',
-        r'cidvpn[_\s]*([a-zA-Z0-9_\-]+)'
-    ]
-    
-    for pattern in vrf_patterns:
-        match = re.search(pattern, text)
-        if match:
-            vrf_name = match.group(1).strip('_').strip()
-            if len(vrf_name) > 2:  # Minimum length check
-                return vrf_name.upper()
-    
-    # Check for domain/service indicators
-    if 'service' in text:
-        return 'SERVICE'
-    elif 'billing' in text:
-        return 'BILLING'
-    elif 'oam' in text:
-        return 'OAM'
-    elif 'mgmt' in text or 'management' in text:
-        return 'MGMT'
-    elif 'tot' in text:
-        return 'TOT'
-    
-    return None
-
-def validate_ip(ip_str):
-    """Validate IP address format"""
-    if not ip_str or ip_str == '-' or ip_str.strip() == '':
-        return None
-    
-    try:
-        # Remove any extra whitespace
-        ip_str = ip_str.strip()
-        
-        # Skip IPv6 addresses for now
-        if ':' in ip_str and '.' not in ip_str:
-            return None
-            
-        # Validate IPv4
-        ipaddress.ip_address(ip_str)
-        
-        # Skip localhost and special addresses
-        if ip_str.startswith('127.') or ip_str.startswith('169.254.'):
-            return None
-            
-        return ip_str
-    except ValueError:
-        return None
-
-def guess_subnet(ip_str):
-    """Guess subnet based on IP address"""
-    if not ip_str:
-        return None
-        
-    try:
-        ip = ipaddress.ip_address(ip_str)
-        
-        # Common subnet guessing based on IP ranges
-        if ip_str.startswith('10.'):
-            # Class A private - use /24 subnets
-            parts = ip_str.split('.')
-            return f"10.{parts[1]}.{parts[2]}.0/24"
-        elif ip_str.startswith('192.168.'):
-            # Class C private
-            parts = ip_str.split('.')
-            return f"192.168.{parts[2]}.0/24"
-        elif ip_str.startswith('172.'):
-            # Class B private
-            parts = ip_str.split('.')
-            second_octet = int(parts[1])
-            if 16 <= second_octet <= 31:
-                return f"172.{parts[1]}.{parts[2]}.0/24"
-        
-        # Default to /24 subnet
-        parts = ip_str.split('.')
-        return f"{parts[0]}.{parts[1]}.{parts[2]}.0/24"
-        
-    except Exception:
-        return None
-
-def determine_status(oper_status, admin_status, ip_address):
-    """Determine IP status based on interface status"""
-    if not ip_address:
-        return 'available'
-    
-    # If interface is up and has IP, it's used
-    if oper_status == 'Up' and admin_status == 'Up':
-        return 'used'
-    elif admin_status == 'Down':
-        return 'reserved'  # Administratively down
-    else:
-        return 'available'
-
-def import_csv_data():
-    """Import data from CSV file"""
+def get_db_connection():
+    """Get database connection"""
     try:
         connection = mysql.connector.connect(**DB_CONFIG)
+        return connection
+    except Error as e:
+        print(f"❌ Database connection error: {e}")
+        return None
+
+def extract_vrf_from_domain(domain):
+    """Extract VRF/VPN information from domain field"""
+    if not domain:
+        return 'default'
+    
+    # Common VRF patterns
+    vrf_mapping = {
+        'CGNAT': 'cgnat',
+        'MGMT': 'management', 
+        'mgmt': 'management',
+        'PROD': 'production',
+        'prod': 'production',
+        'DEV': 'development',
+        'dev': 'development',
+        'TEST': 'testing',
+        'test': 'testing',
+        'GUEST': 'guest',
+        'guest': 'guest',
+        'DMZ': 'dmz',
+        'CORE': 'core',
+        'ACCESS': 'access'
+    }
+    
+    domain_upper = domain.upper()
+    for key, vrf in vrf_mapping.items():
+        if key in domain_upper:
+            return vrf
+    
+    return domain.lower()
+
+def calculate_subnet_from_ip(ip_str):
+    """Calculate subnet based on IP address (assume /24 for most cases)"""
+    try:
+        ip_obj = ipaddress.IPv4Address(ip_str)
+        
+        # Common subnet patterns
+        if ip_str.startswith('127.'):
+            return '127.0.0.0/8'  # Loopback
+        elif ip_str.startswith('10.'):
+            return f"{'.'.join(ip_str.split('.')[0:3])}.0/24"  # Private Class A
+        elif ip_str.startswith('192.168.'):
+            return f"{'.'.join(ip_str.split('.')[0:3])}.0/24"  # Private Class C
+        elif ip_str.startswith('172.'):
+            # Private Class B (172.16.0.0 - 172.31.255.255)
+            return f"{'.'.join(ip_str.split('.')[0:3])}.0/24"
+        else:
+            # Public IP - assume /24
+            return f"{'.'.join(ip_str.split('.')[0:3])}.0/24"
+    except:
+        return None
+
+def is_valid_ip(ip_str):
+    """Check if string is valid IP address"""
+    try:
+        ipaddress.IPv4Address(ip_str)
+        return True
+    except:
+        return False
+
+def import_csv_data(csv_file_path, limit=None):
+    """Import data from CSV file to database"""
+    try:
+        connection = get_db_connection()
+        if not connection:
+            print("❌ Cannot connect to database")
+            return
+        
         cursor = connection.cursor()
         
         # Clear existing data
-        print("🗑️ Clearing existing IP data...")
+        print("🗑️ Clearing existing data...")
         cursor.execute("DELETE FROM ip_inventory")
         connection.commit()
         
-        # Open and read CSV file
-        print("📂 Reading CSV file...")
-        imported_count = 0
-        skipped_count = 0
-        error_count = 0
+        # Read CSV file
+        print(f"📂 Reading CSV file: {csv_file_path}")
         
-        with open('datalake.Inventory.port.csv', 'r', encoding='utf-8') as csvfile:
-            reader = csv.DictReader(csvfile)
+        with open(csv_file_path, 'r', encoding='utf-8') as file:
+            csv_reader = csv.DictReader(file)
             
-            print("📊 Processing network interfaces...")
+            inserted_count = 0
+            skipped_count = 0
+            processed_count = 0
             
-            # Track unique IPs to avoid duplicates
-            seen_ips = set()
+            print(f"📊 Starting data import...")
+            print("=" * 80)
             
-            for row_num, row in enumerate(reader, 1):
-                if row_num % 10000 == 0:
-                    print(f"   Processed {row_num:,} rows...")
+            for row in csv_reader:
+                processed_count += 1
+                
+                # Apply limit if specified
+                if limit and processed_count > limit:
+                    break
+                
+                # Progress indicator
+                if processed_count % 1000 == 0:
+                    print(f"📈 Processed {processed_count:,} records, Inserted: {inserted_count:,}, Skipped: {skipped_count:,}")
+                
+                # Extract data from CSV row
+                ip_address = (row.get('ifIP') or '').strip()
+                host_name = (row.get('host_name') or '').strip()
+                if_name = (row.get('ifName') or '').strip()
+                if_descr = (row.get('ifDescr') or '').strip()
+                domain = (row.get('domain') or '').strip()
+                vendor = (row.get('vendor') or '').strip()
+                model = (row.get('model') or '').strip()
+                admin_status = (row.get('ifAdminStatus') or '').strip()
+                oper_status = (row.get('ifOperStatus') or '').strip()
+                
+                # Skip if no IP address or invalid IP
+                if not ip_address or ip_address == '-' or not is_valid_ip(ip_address):
+                    skipped_count += 1
+                    continue
+                
+                # Skip loopback IPs
+                if ip_address.startswith('127.'):
+                    skipped_count += 1
+                    continue
+                
+                # Calculate subnet
+                subnet = calculate_subnet_from_ip(ip_address)
+                if not subnet:
+                    skipped_count += 1
+                    continue
+                
+                # Extract VRF from domain
+                vrf_vpn = extract_vrf_from_domain(domain)
+                
+                # Determine status based on admin and operational status
+                if admin_status == 'Up' and oper_status == 'Up':
+                    status = 'used'
+                elif admin_status == 'Up' and oper_status == 'Down':
+                    status = 'reserved'
+                else:
+                    status = 'available'
+                
+                # Create description
+                description_parts = []
+                if if_name:
+                    description_parts.append(f"Interface: {if_name}")
+                if if_descr and if_descr != if_name:
+                    description_parts.append(f"Desc: {if_descr}")
+                if vendor:
+                    description_parts.append(f"Vendor: {vendor}")
+                if model:
+                    description_parts.append(f"Model: {model}")
+                
+                description = " | ".join(description_parts) if description_parts else f"Imported from CSV - {host_name}"
+                
+                # Create hostname
+                hostname = host_name if host_name else f"host-{ip_address.replace('.', '-')}"
                 
                 try:
-                    # Extract relevant fields
-                    ip_address = validate_ip(row.get('ifIP', ''))
-                    
-                    # Skip if no valid IP
-                    if not ip_address or ip_address in seen_ips:
-                        skipped_count += 1
-                        continue
-                    
-                    seen_ips.add(ip_address)
-                    
-                    # Extract other fields
-                    hostname = row.get('host_name', '').strip()
-                    interface_name = row.get('ifName', '').strip()
-                    interface_desc = row.get('ifDescr', '').strip()
-                    interface_alias = row.get('ifAlias', '').strip()
-                    vendor = row.get('vendor', '').strip()
-                    model = row.get('model', '').strip()
-                    domain = row.get('domain', '').strip()
-                    
-                    # Extract VRF/VPN information
-                    vrf_vpn = extract_vrf_vpn(interface_alias, interface_desc)
-                    
-                    # Build hostname with domain if available
-                    full_hostname = hostname
-                    if domain and domain != hostname:
-                        full_hostname = f"{hostname}.{domain}" if hostname else domain
-                    
-                    # Guess subnet
-                    subnet = guess_subnet(ip_address)
-                    
-                    # Determine status
-                    oper_status = row.get('ifOperStatus', '').strip()
-                    admin_status = row.get('ifAdminStatus', '').strip()
-                    status = determine_status(oper_status, admin_status, ip_address)
-                    
-                    # Build description
-                    description_parts = []
-                    if interface_name:
-                        description_parts.append(f"Interface: {interface_name}")
-                    if interface_desc and interface_desc != interface_name:
-                        description_parts.append(f"Desc: {interface_desc}")
-                    if vendor:
-                        description_parts.append(f"Vendor: {vendor}")
-                    if model:
-                        description_parts.append(f"Model: {model}")
-                    if oper_status and admin_status:
-                        description_parts.append(f"Status: {admin_status}/{oper_status}")
-                    
-                    description = " | ".join(description_parts)
-                    
                     # Insert into database
-                    insert_query = """
+                    cursor.execute("""
                         INSERT INTO ip_inventory 
                         (ip_address, subnet, status, vrf_vpn, hostname, description)
                         VALUES (%s, %s, %s, %s, %s, %s)
-                    """
+                        ON DUPLICATE KEY UPDATE
+                        status = VALUES(status),
+                        vrf_vpn = VALUES(vrf_vpn),
+                        hostname = VALUES(hostname),
+                        description = VALUES(description),
+                        updated_at = CURRENT_TIMESTAMP
+                    """, (ip_address, subnet, status, vrf_vpn, hostname, description))
                     
-                    values = (
-                        ip_address,
-                        subnet,
-                        status,
-                        vrf_vpn,
-                        full_hostname[:100] if full_hostname else '',  # Limit hostname length
-                        description[:500] if description else ''  # Limit description length
-                    )
+                    inserted_count += 1
                     
-                    cursor.execute(insert_query, values)
-                    imported_count += 1
-                    
-                    # Commit every 1000 records for performance
-                    if imported_count % 1000 == 0:
-                        connection.commit()
-                        
-                except Exception as e:
-                    error_count += 1
-                    if error_count <= 10:  # Only show first 10 errors
-                        print(f"   ⚠️ Error processing row {row_num}: {e}")
+                except Error as e:
+                    if "Duplicate entry" not in str(e):
+                        print(f"⚠️ Error inserting {ip_address}: {e}")
+                    skipped_count += 1
         
-        # Final commit
         connection.commit()
-        
-        # Get statistics
-        cursor.execute("SELECT status, COUNT(*) FROM ip_inventory GROUP BY status")
-        stats = cursor.fetchall()
-        
-        cursor.execute("SELECT COUNT(DISTINCT subnet) FROM ip_inventory WHERE subnet IS NOT NULL")
-        subnet_count = cursor.fetchone()[0]
-        
-        print(f"\n✅ Import completed!")
-        print(f"   📥 Imported: {imported_count:,} IP addresses")
-        print(f"   ⏭️ Skipped: {skipped_count:,} records")
-        print(f"   ❌ Errors: {error_count:,} records")
-        print(f"   🌐 Subnets: {subnet_count:,} unique subnets")
-        
-        print(f"\n📊 Status Distribution:")
-        for status, count in stats:
-            print(f"   {status}: {count:,}")
-        
         cursor.close()
         connection.close()
         
-    except Error as e:
-        print(f"❌ Database error: {e}")
-    except FileNotFoundError:
-        print(f"❌ CSV file 'datalake.Inventory.port.csv' not found")
+        print("=" * 80)
+        print(f"✅ Import completed!")
+        print(f"📊 Summary:")
+        print(f"   - Total processed: {processed_count:,}")
+        print(f"   - Successfully imported: {inserted_count:,}")
+        print(f"   - Skipped: {skipped_count:,}")
+        print(f"   - Success rate: {(inserted_count/processed_count*100):.1f}%")
+        
+        return inserted_count
+        
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"❌ Error during import: {e}")
+        return 0
+
+def analyze_csv_structure(csv_file_path, sample_rows=10):
+    """Analyze CSV structure and show sample data"""
+    try:
+        print(f"🔍 Analyzing CSV structure: {csv_file_path}")
+        print("=" * 80)
+        
+        with open(csv_file_path, 'r', encoding='utf-8') as file:
+            csv_reader = csv.DictReader(file)
+            
+            # Show headers
+            headers = csv_reader.fieldnames
+            print(f"📋 Headers ({len(headers)} columns):")
+            for i, header in enumerate(headers, 1):
+                print(f"   {i:2d}. {header}")
+            
+            print("\n📊 Sample data:")
+            print("-" * 80)
+            
+            # Show sample rows
+            for i, row in enumerate(csv_reader):
+                if i >= sample_rows:
+                    break
+                    
+                print(f"\nRow {i+1}:")
+                # Show only relevant fields
+                relevant_fields = ['ifIP', 'host_name', 'ifName', 'ifDescr', 'domain', 'vendor', 'model', 'ifAdminStatus', 'ifOperStatus']
+                for field in relevant_fields:
+                    if field in row:
+                        value = row[field][:50] if len(str(row[field])) > 50 else row[field]
+                        print(f"   {field:15}: {value}")
+        
+        print("=" * 80)
+        
+    except Exception as e:
+        print(f"❌ Error analyzing CSV: {e}")
 
 if __name__ == '__main__':
+    csv_file = 'datalake.Inventory.port.csv'
+    
     print("🚀 IPAM CSV Import Tool")
-    print("="*50)
-    print("Importing network interface data from CSV...")
-    print("This may take several minutes for large files.")
-    print("="*50)
+    print("=" * 80)
     
-    start_time = datetime.now()
-    import_csv_data()
-    end_time = datetime.now()
+    # Analyze CSV structure first
+    analyze_csv_structure(csv_file, sample_rows=5)
     
-    duration = end_time - start_time
-    print(f"\n⏱️ Import completed in {duration.total_seconds():.1f} seconds")
+    # Ask for confirmation
+    print("\n" + "=" * 80)
+    confirm = input("🤔 Proceed with import? This will replace existing data. (y/N): ").strip().lower()
+    
+    if confirm in ['y', 'yes']:
+        # Ask for limit
+        limit_input = input("📊 Import limit (press Enter for all data, or number): ").strip()
+        limit = None
+        if limit_input.isdigit():
+            limit = int(limit_input)
+            print(f"📝 Will import maximum {limit:,} records")
+        else:
+            print("📝 Will import all valid data")
+        
+        # Import data
+        print("\n" + "=" * 80)
+        import_csv_data(csv_file, limit=limit)
+    else:
+        print("❌ Import cancelled")

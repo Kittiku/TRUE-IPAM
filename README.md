@@ -1,227 +1,185 @@
-# IPAM - IP Address Management System
+# TRUE-IPAM: IP Address Management System
 
-A simple and clean IP Address Management System built with Flask and MySQL.
+A comprehensive IP Address Management system built with Flask and MySQL for enterprise network administration.
 
-## Features
+## 🚀 Production-Ready Features
 
-- ✅ **IP Address Management**: Add, edit, delete, and search IP addresses
-- ✅ **Status Tracking**: Track IP status (Used, Available, Reserved)
-- ✅ **Subnet Management**: Organize IPs by subnets
-- ✅ **Search & Filter**: Search by IP, hostname, or description
-- ✅ **Statistics Dashboard**: Real-time statistics and reporting
-- ✅ **Clean UI**: Modern responsive design with Tailwind CSS
+- **Complete IP Management**: Full CRUD operations with individual IP editing
+- **Bulk Operations**: Subnet-wide status changes and service assignments  
+- **Advanced Filtering**: CIDR, IP range, and service domain filtering
+- **Real-time Dashboard**: Live statistics and utilization monitoring
+- **Service Domain Tracking**: VRF/VPN management and monitoring
+- **Click-to-Edit Interface**: Intuitive IP address modification
+- **Toast Notifications**: User-friendly feedback system
 
-## Screenshots
+## 📁 Clean Project Structure
 
-### Main Dashboard
-![Dashboard](https://via.placeholder.com/800x400/4F46E5/FFFFFF?text=IP+Management+Dashboard)
+```
+TRUE-IPAM/
+├── main_server.py              # Flask application (Production)
+├── mysql_manager.py            # Database connection manager
+├── import_csv_data.py          # CSV data import utility
+├── requirements.txt            # Python dependencies
+├── start_ipam.bat             # Windows startup script
+├── datalake.Inventory.port.csv # Sample data
+│
+├── templates/                  # Active templates only
+│   ├── ip_management_clean.html # Main IPAM interface
+│   └── subnet_monitor.html     # Subnet monitoring
+│
+├── static/js/                  # Frontend assets
+│   └── app.js                 # JavaScript functionality
+│
+└── old/                       # Archived legacy files
+    ├── servers/               # Previous server versions
+    ├── templates/             # Old UI templates
+    ├── scripts/               # Utility scripts
+    └── docs/                  # Legacy documentation
+```
 
-## Installation
-
-### Prerequisites
-- Python 3.8+
-- MySQL Server
-- Git
-
-### Setup
+## ⚡ Quick Start
 
 1. **Clone the repository**
-   ```bash
-   git clone https://github.com/Kittiku/IPAM.git
-   cd IPAM
-   ```
-
-2. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. **Configure Database**
-   - Install MySQL Server
-   - Update database credentials in `main_server.py`:
-   ```python
-   DB_CONFIG = {
-       'host': 'localhost',
-       'user': 'root',
-       'password': 'your_password',
-       'database': 'ipam_db'
-   }
-   ```
-
-4. **Create sample data (optional)**
-   ```bash
-   python create_sample_data.py
-   ```
-
-5. **Start the server**
-   ```bash
-   python main_server.py
-   ```
-   
-   Or use the batch file on Windows:
-   ```cmd
-   start_ipam.bat
-   ```
-
-6. **Access the application**
-   - Open browser: http://127.0.0.1:5005
-   - Main page redirects to IP Management
-
-## Usage
-
-### Adding IP Addresses
-1. Click "Add IP" button
-2. Fill in required fields:
-   - IP Address (required)
-   - Subnet (required)
-   - Status (required)
-3. Optional fields:
-   - VRF/VPN
-   - Hostname
-   - Description
-4. Click "Save"
-
-### Searching and Filtering
-- **Search**: Type IP address, hostname, or description in search box
-- **Filter by Status**: Use dropdown to filter by Used/Available/Reserved
-- **Clear Filters**: Click "Clear" button to reset
-
-### Editing IP Addresses
-1. Click "Edit" button in the Actions column
-2. Modify fields as needed
-3. Click "Save"
-
-### Deleting IP Addresses
-1. Click "Delete" button in the Actions column
-2. Confirm deletion in popup
-
-## API Endpoints
-
-### Get IP Data
-```http
-GET /api/ip-data?page=1&limit=50&search=&status=
+```bash
+git clone https://github.com/Kittiku/TRUE-IPAM.git
+cd TRUE-IPAM
 ```
 
-### Add IP Address
-```http
-POST /api/add-ip
-Content-Type: application/json
-
-{
-  "ip_address": "192.168.1.10",
-  "subnet": "192.168.1.0/24",
-  "status": "used",
-  "vrf_vpn": "VRF-CORE",
-  "hostname": "server01.example.com",
-  "description": "Production server"
-}
+2. **Setup Python environment**
+```bash
+python -m venv .venv
+.venv\Scripts\activate  # Windows
+pip install -r requirements.txt
 ```
 
-### Update IP Address
-```http
-PUT /api/update-ip/{id}
-Content-Type: application/json
+3. **Configure MySQL**
+- Update connection settings in `mysql_manager.py`
+- Database: `ipam_db` (auto-created)
 
-{
-  "status": "available",
-  "description": "Updated description"
-}
+4. **Launch the system**
+```bash
+python main_server.py
+# OR
+start_ipam.bat
 ```
 
-### Delete IP Address
-```http
-DELETE /api/delete-ip/{id}
+5. **Access the interface**
+- Main IPAM: http://127.0.0.1:5005/ip-management
+- Subnet Monitor: http://127.0.0.1:5005/subnet-monitor
+
+## 🎯 Key Capabilities
+
+### Individual IP Management
+- **Click any IP address** to edit details (IP, status, hostname, description)
+- **Quick status buttons** for one-click status changes
+- **Real-time validation** and error handling
+
+### Bulk Subnet Operations
+- **Change Status**: Update all IPs in subnet to specific status
+- **Assign Service**: Assign service domain to entire subnet
+- **Reserve Range**: Reserve specific IP ranges within subnet
+- **Release Range**: Release specific IP ranges
+
+### Advanced Filtering
+- **CIDR Filtering**: Filter subnets by prefix length
+- **IP Range Filtering**: Show subnets within specific IP ranges
+- **Service Domain Filtering**: Filter by VRF/service assignment
+- **Status Filtering**: Filter by utilization levels
+
+## 🗃️ Database Schema
+
+### ip_inventory
+```sql
+ip_address (VARCHAR, PRIMARY KEY)
+status (ENUM: used, available, reserved)
+vrf_vpn (VARCHAR) - Service domain assignment  
+hostname (VARCHAR) - Device hostname
+description (TEXT) - Additional notes
+subnet (VARCHAR) - Associated subnet
+created_at, updated_at (TIMESTAMP)
 ```
 
-### Get Statistics
-```http
-GET /api/statistics
+### subnets
+```sql
+id (INT, AUTO_INCREMENT PRIMARY KEY)
+subnet (VARCHAR) - CIDR notation
+description (TEXT) - Subnet description
+service_domain (VARCHAR) - Assigned service
+status (ENUM: active, inactive)
+created_at, updated_at (TIMESTAMP)
 ```
 
-## Database Schema
+## 🔧 API Endpoints
 
-### ip_inventory Table
-| Column | Type | Description |
-|--------|------|-------------|
-| id | INT AUTO_INCREMENT | Primary key |
-| ip_address | VARCHAR(15) | IP address (unique) |
-| subnet | VARCHAR(18) | Subnet CIDR |
-| status | ENUM | used/available/reserved |
-| vrf_vpn | VARCHAR(50) | VRF or VPN name |
-| hostname | VARCHAR(100) | Hostname |
-| description | TEXT | Description |
-| created_at | TIMESTAMP | Creation time |
-| updated_at | TIMESTAMP | Last update time |
+### Core Operations
+- `GET /api/subnet-monitor` - Subnet statistics and monitoring
+- `GET /api/subnet-detail/<subnet>` - Detailed subnet information
+- `GET /api/ip-details?ip=<ip>` - Individual IP details
 
-## File Structure
+### IP Management
+- `PUT /api/edit-ip/<ip>` - Full IP edit (address, status, details)
+- `PUT /api/quick-edit-ip/<ip>` - Quick status change
+- `POST /api/bulk-edit-subnet` - Bulk subnet operations
 
-```
-IPAM/
-├── main_server.py              # Main Flask application
-├── create_sample_data.py       # Sample data generator
-├── start_ipam.bat             # Windows startup script
-├── requirements.txt           # Python dependencies
-├── README.md                  # This file
-└── templates/
-    └── ip_management.html     # Main template
-```
+### Data Import
+- `POST /api/add-ip` - Add new IP address
+- Support for CSV import via `import_csv_data.py`
 
-## Development
+## 📊 Sample Data
 
-### Adding New Features
-1. Update the database schema if needed
-2. Add new API endpoints in `main_server.py`
-3. Update the frontend in `templates/ip_management.html`
-4. Test thoroughly
+Includes real-world sample data with:
+- **46,400+ IP addresses** across multiple service domains
+- **Realistic distribution**: 48.7% used, 41.1% available, 10.2% reserved
+- **Service domains**: IPRAN-D, RN/AGN, IPCORE-BB, IPCORE-MB, etc.
+- **Multiple subnet sizes**: /16, /20, /24, /28 networks
 
-### Database Migration
-The application automatically creates the database and tables on first run.
+## 🔄 Migration from Legacy
 
-## Troubleshooting
+All previous development files are organized in the `old/` directory:
+- Server versions, templates, scripts, and documentation
+- Preserved for reference and potential feature extraction
+- See `old/README_ARCHIVE.md` for detailed inventory
 
-### Common Issues
+## 🚀 Production Deployment
 
-1. **Database Connection Error**
-   - Check MySQL server is running
-   - Verify credentials in `main_server.py`
-   - Ensure database user has proper permissions
+For production environments:
+1. Use WSGI server (Gunicorn/uWSGI)
+2. Configure MySQL with connection pooling
+3. Set up reverse proxy (Nginx/Apache)
+4. Enable SSL/HTTPS
+5. Configure logging and monitoring
 
-2. **Port Already in Use**
-   - Change port in `main_server.py`: `app.run(port=5006)`
-   - Or stop other applications using port 5005
+## 📈 System Statistics
 
-3. **Template Not Found**
-   - Ensure `templates/ip_management.html` exists
-   - Check file permissions
+Current data includes:
+- **Service Domains**: 10 active domains
+- **Total IPs**: 46,400+ addresses
+- **Subnet Types**: /16 to /30 networks
+- **Utilization**: Realistic enterprise-level distribution
 
-## Contributing
+## 🛠️ Development Notes
+
+- **Framework**: Flask with MySQL backend
+- **Frontend**: Modern HTML5/CSS3 with Tailwind CSS
+- **JavaScript**: Vanilla JS with async/await patterns
+- **Database**: MySQL with optimized queries
+- **Architecture**: RESTful API design
+
+## 📝 License
+
+Proprietary software for enterprise network management.
+
+## 🤝 Contributing
 
 1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test thoroughly
-5. Submit a pull request
+2. Create feature branch (`git checkout -b feature/new-feature`)
+3. Commit changes (`git commit -am 'Add new feature'`)
+4. Push to branch (`git push origin feature/new-feature`)
+5. Create Pull Request
 
-## License
+---
 
-This project is licensed under the MIT License.
-
-## Support
-
-For issues and questions:
-- Create an issue in the GitHub repository
-- Contact: [Your Email]
-
-## Changelog
-
-### v2.0.0 (Clean Version)
-- Simplified to single IP Management page
-- Removed complex SPA functionality
-- Clean and focused UI
-- Better performance
-- Easier maintenance
-
-### v1.0.0 (Original)
-- Multi-page SPA application
-- Complex dashboard with charts
-- Multiple management interfaces
+**Version**: 2.0 Production  
+**Last Updated**: August 2025  
+**Status**: Production Ready  
+**Repository**: https://github.com/Kittiku/TRUE-IPAM
