@@ -13,18 +13,6 @@ import ipaddress
 
 app = Flask(__name__)
 
-@app.route('/advanced-dashboard')
-def advanced_dashboard():
-    """Advanced dashboard with network tree and charts"""
-    return render_template('advanced_dashboard.html')
-
-@app.route('/test-dashboard')
-def test_dashboard():
-    """Test dashboard for debugging"""
-    return render_template('test_dashboard.html')
-
-app = Flask(__name__)
-
 # Database Configuration
 DB_CONFIG = {
     'host': 'localhost',
@@ -368,6 +356,90 @@ def api_statistics():
     print(f"📊 Stats calculated: Available IPs = {stats.get('available_ips', 'Unknown')}")
     return jsonify(stats)
 
+@app.route('/api/ip-list')
+def api_ip_list():
+    """API to get paginated IP list with filtering"""
+    try:
+        page = int(request.args.get('page', 1))
+        per_page = int(request.args.get('per_page', 50))
+        search = request.args.get('search', '')
+        status_filter = request.args.get('status', '')
+        subnet_filter = request.args.get('subnet', '')
+        vrf_filter = request.args.get('vrf', '')
+        
+        connection = get_db_connection()
+        if not connection:
+            return jsonify({'error': 'Database connection failed'}), 500
+            
+        cursor = connection.cursor(dictionary=True)
+        
+        # Build WHERE clause
+        where_conditions = []
+        params = []
+        
+        if search:
+            where_conditions.append("(ip_address LIKE %s OR hostname LIKE %s OR description LIKE %s)")
+            search_param = f"%{search}%"
+            params.extend([search_param, search_param, search_param])
+            
+        if status_filter and status_filter != 'all':
+            where_conditions.append("status = %s")
+            params.append(status_filter)
+            
+        if subnet_filter:
+            where_conditions.append("subnet LIKE %s")
+            params.append(f"%{subnet_filter}%")
+            
+        if vrf_filter:
+            where_conditions.append("vrf_vpn LIKE %s")
+            params.append(f"%{vrf_filter}%")
+        
+        where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"
+        
+        # Get total count
+        count_query = f"SELECT COUNT(*) as total FROM ip_inventory WHERE {where_clause}"
+        cursor.execute(count_query, params)
+        total_count = cursor.fetchone()['total']
+        
+        # Get paginated results
+        offset = (page - 1) * per_page
+        query = f"""
+            SELECT ip_address, status, vrf_vpn, hostname, description, subnet,
+                   created_at, updated_at
+            FROM ip_inventory 
+            WHERE {where_clause}
+            ORDER BY INET_ATON(ip_address)
+            LIMIT %s OFFSET %s
+        """
+        params.extend([per_page, offset])
+        cursor.execute(query, params)
+        
+        ips = cursor.fetchall()
+        
+        # Format dates
+        for ip in ips:
+            if ip['created_at']:
+                ip['created_at'] = ip['created_at'].strftime('%Y-%m-%d %H:%M:%S')
+            if ip['updated_at']:
+                ip['updated_at'] = ip['updated_at'].strftime('%Y-%m-%d %H:%M:%S')
+        
+        cursor.close()
+        connection.close()
+        
+        return jsonify({
+            'data': ips,
+            'pagination': {
+                'page': page,
+                'per_page': per_page,
+                'total': total_count,
+                'pages': (total_count + per_page - 1) // per_page
+            }
+        })
+        
+    except Error as e:
+        print(f"❌ Error getting IP list: {e}")
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/network-tree')
 def api_network_tree():
     """API to get network tree structure with VRF folders"""
@@ -580,6 +652,68 @@ def api_charts_data():
         
     except Exception as e:
         print(f"❌ Error getting charts data: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/vrf-summary')
+def api_vrf_summary():
+    """API to get VRF/Service Domain summary"""
+    try:
+        connection = get_db_connection()
+        if not connection:
+            return jsonify({'error': 'Database connection failed'}), 500
+            
+        cursor = connection.cursor(dictionary=True)
+        
+        # Get VRF summary with statistics
+        cursor.execute("""
+            SELECT 
+                COALESCE(vrf_vpn, 'Unassigned') as service_domain,
+                COUNT(*) as total_ips,
+                SUM(CASE WHEN status = 'used' THEN 1 ELSE 0 END) as used_ips,
+                SUM(CASE WHEN status = 'available' THEN 1 ELSE 0 END) as available_ips,
+                SUM(CASE WHEN status = 'reserved' THEN 1 ELSE 0 END) as reserved_ips
+            FROM ip_inventory
+            GROUP BY vrf_vpn
+            ORDER BY total_ips DESC
+        """)
+        
+        vrf_data = cursor.fetchall()
+        
+        # Calculate percentages and format data
+        total_all_ips = sum(row['total_ips'] for row in vrf_data)
+        
+        summary = []
+        for row in vrf_data:
+            total = row['total_ips']
+            used = row['used_ips']
+            available = row['available_ips']
+            reserved = row['reserved_ips']
+            
+            utilization = (used / total * 100) if total > 0 else 0
+            percentage_of_total = (total / total_all_ips * 100) if total_all_ips > 0 else 0
+            
+            summary.append({
+                'service_domain': row['service_domain'],
+                'total_ips': total,
+                'used_ips': used,
+                'available_ips': available,
+                'reserved_ips': reserved,
+                'utilization_percent': round(utilization, 2),
+                'percentage_of_total': round(percentage_of_total, 2),
+                'status': 'Critical' if utilization > 90 else 'Warning' if utilization > 70 else 'Good'
+            })
+        
+        cursor.close()
+        connection.close()
+        
+        return jsonify({
+            'summary': summary,
+            'total_domains': len(vrf_data),
+            'total_ips': total_all_ips
+        })
+        
+    except Error as e:
+        print(f"❌ Error getting VRF summary: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/vrf-vpn-list')
